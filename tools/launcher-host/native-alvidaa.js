@@ -73,6 +73,27 @@
     }
 
     function p2(n) { return (n < 10 ? "0" : "") + n; }
+    // The engine this Home runs in carries no time zone database: its offset is
+    // the zone's standard offset all year, so a bare new Date() reads an hour
+    // slow whenever daylight saving is in force. The vendor SDK knows the TV's
+    // real local time: datetime.getLocalDate() returns it in the UTC fields of
+    // a Date (the stock screen saver formats it from there). Rebuild a Date
+    // whose ordinary getters read that wall time, so the clock, the date line
+    // and the idle drift need no other change. Anything unexpected falls back
+    // to the engine's own time, which is what this Home showed before.
+    function localNow() {
+      var engine = new Date();
+      try {
+        var datetime = sdk && sdk.datetime;
+        var local = datetime && typeof datetime.getLocalDate === "function"
+          ? datetime.getLocalDate(engine) : null;
+        if (local && typeof local.getUTCHours === "function" && !isNaN(local.getTime())) {
+          return new Date(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate(),
+            local.getUTCHours(), local.getUTCMinutes(), local.getUTCSeconds(), local.getUTCMilliseconds());
+        }
+      } catch (error) { /* keep the engine's time */ }
+      return engine;
+    }
     function hue(value) {
       var h = 0, str = String(value || "");
       for (var i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) % 360;
@@ -217,7 +238,7 @@
           overlay: false, overlayIndex: 0,
           settings: false, settingsPage: "root", settingsIndex: 0,
           nameDraft: "", nameIndex: 0, nameSourceId: null,
-          now: new Date(), width: (root && root.innerWidth) || 1920,
+          now: localNow(), width: (root && root.innerWidth) || 1920,
           toast: "", toastUntil: 0,
           idle: false, idleAt: 0, idleFade: 1,
           tintColour: "", tintOpacity: 0,
@@ -400,7 +421,7 @@
           this._platform.start();
           this._refreshTick = 0;
           this._clock = setInterval(function () {
-            vm.now = new Date();
+            vm.now = localNow();
             var nowMs = Date.now();
             if (vm.idleAt && !vm.idle && nowMs >= vm.idleAt) {
               vm.enterIdle();

@@ -65,6 +65,23 @@ Feedback and error messages are displayed via a floating glass HUD pill rendered
 - Action failures from `run()`, empty overlay notices ("No apps reported"), and activation notices route through `showToast`.
 - The 1s clock interval drives toast expiry, clearing expired messages and triggering smooth opacity and transform transitions.
 
+### Clock source
+
+The engine this Home runs in has no time zone database. Measured on a 100U7SAU
+(V02.09.50U.Q0311, Australia/Sydney): `getTimezoneOffset()` is the zone's standard
+offset in every month and `Intl` is undefined, so `new Date().getHours()` is an hour
+behind while daylight saving is in force. The browser that opens app tiles is correct;
+only this engine is affected.
+
+`localNow()` therefore asks the vendor SDK: `sdk.datetime.getLocalDate(date)` returns a
+`Date` whose **UTC fields** hold the TV's wall time. `localNow()` rebuilds a `Date` from
+those fields so that `getHours()`, `getMinutes()`, `getDay()`, `getDate()` and
+`getMonth()` read the wall time everywhere else in the component. Both places that take
+"now" use it: `data()` and the 1s interval.
+
+If the module or function is missing, throws, or returns anything that is not a valid
+date, `localNow()` returns `new Date()`, which is the previous behaviour.
+
 ### Remote number hotkeys
 
 Hardware remote number keys `0` through `9` are mapped from `sdk.key.KEYMAP` (`NUM_0` .. `NUM_9`), guarded against undefined values:
@@ -644,4 +661,6 @@ hairline, sheen, shadow and scale asserted against the tree, the ring gone
 everywhere, the header title/count/hint placement, equal 56px gutters and a
 centred derived grid at 1920, the heading band's 64px air above versus the
 24px row gap), render structure and scaling, the entry's variant
-selection, and the build's hash and output guards.
+selection, the clock source (wall time from the SDK's UTC fields, the tick
+asking again, every fallback to the engine time), and the build's hash and
+output guards.

@@ -33,7 +33,8 @@ function setup(options = {}) {
       set: (key, val) => { store.set(key, val); calls.push(['storage:set', key, val]); }
     },
     apc: { CMDMETHOD: { KEY_INPUT_START: 'input' } },
-    router: { isCurrentPathEqualTo: () => true }
+    router: { isCurrentPathEqualTo: () => true },
+    datetime: options.datetime
   };
   root._V_SDK_ = { vre: { SDK: () => sdk } };
   let notify;
@@ -2488,4 +2489,72 @@ test('custom labels & CEC fallback: resolves displayname, TV rename over generic
   const fireInput = { sourceId: 'HDMI3', name: 'HDMI3', deviceName: 'AFTMM', hasSignal: true };
   assert.equal(v.deviceArtPngForInput(fireInput), 'data:image/png;base64,FIREPNG');
   v.stop();
+});
+
+// ---- clock: the TV's local time, not the engine's ----------------------------
+// The engine has no time zone database (fixed standard offset, no daylight
+// saving), so the Home asks the vendor SDK. getLocalDate() answers with the
+// wall time in the UTC fields of a Date.
+
+function wallTime(year, month, day, hours, minutes, seconds) {
+  return { getLocalDate: () => new Date(Date.UTC(year, month, day, hours, minutes, seconds || 0)) };
+}
+
+test('clock: reads the TV wall time from sdk.datetime.getLocalDate UTC fields', () => {
+  const f = setup({ datetime: wallTime(2026, 10, 29, 1, 2, 3) }), v = f.instance;
+  assert.equal(v.now.getHours(), 1, 'hour comes from the UTC field, whatever the engine offset is');
+  assert.equal(v.now.getMinutes(), 2);
+  assert.equal(v.now.getSeconds(), 3);
+  assert.equal(v.now.getDate(), 29);
+  assert.equal(v.now.getMonth(), 10);
+  assert.equal(v.now.getDay(), 0, 'weekday follows the wall date (a Sunday)');
+  assert.deepEqual({ ...v.clockParts() }, { h: '01', m: '02', ampm: '' });
+  v.prefs = { clock12h: true };
+  assert.deepEqual({ ...v.clockParts() }, { h: '1', m: '02', ampm: 'AM' });
+});
+
+test('clock: the wall date is used across a day and year boundary', () => {
+  const f = setup({ datetime: wallTime(2026, 11, 31, 23, 59, 0) }), v = f.instance;
+  assert.equal(v.now.getHours(), 23);
+  assert.equal(v.now.getMinutes(), 59);
+  assert.equal(v.now.getDate(), 31);
+  assert.equal(v.now.getMonth(), 11);
+  assert.equal(v.now.getFullYear(), 2026);
+});
+
+test('clock: the 1s tick refreshes from the SDK and hands it the engine time', () => {
+  let hour = 9;
+  const seen = [];
+  const datetime = { getLocalDate(date) { seen.push(date); return new Date(Date.UTC(2026, 5, 15, hour, 30, 0)); } };
+  const f = setup({ datetime }), v = f.instance;
+  assert.equal(v.now.getHours(), 9);
+  v.start();
+  hour = 10;
+  clockTick(f)();
+  assert.equal(v.now.getHours(), 10, 'the tick asks again');
+  assert.ok(seen.length >= 2 && seen.every(d => d && typeof d.getTime === 'function' && !isNaN(d.getTime())),
+    'getLocalDate is called with a real Date each time');
+  v.stop();
+});
+
+test('clock: falls back to the engine time when the SDK cannot answer', () => {
+  const cases = {
+    'no datetime module': undefined,
+    'module without getLocalDate': {},
+    'getLocalDate throws': { getLocalDate() { throw new Error('not ready'); } },
+    'getLocalDate returns a string': { getLocalDate: () => '01:02' },
+    'getLocalDate returns null': { getLocalDate: () => null },
+    'getLocalDate returns an invalid date': { getLocalDate: () => new Date(NaN) }
+  };
+  for (const [label, datetime] of Object.entries(cases)) {
+    const before = Date.now();
+    const f = setup({ datetime }), v = f.instance;
+    assert.ok(v.now instanceof Date || typeof v.now.getHours === 'function', label + ': now is a date');
+    assert.ok(!isNaN(v.now.getTime()), label + ': now is valid');
+    assert.ok(Math.abs(v.now.getTime() - before) < 5000, label + ': now is the engine time');
+    v.start();
+    clockTick(f)();
+    assert.ok(Math.abs(v.now.getTime() - Date.now()) < 5000, label + ': the tick also falls back');
+    v.stop();
+  }
 });
